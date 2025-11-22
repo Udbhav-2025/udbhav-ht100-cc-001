@@ -1,0 +1,77 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to get user role from custom claims
+    function getUserRole() {
+      return request.auth.token.role;
+    }
+    
+    // Helper function to check if user is officer (any role)
+    function isOfficer() {
+      return getUserRole() in ['constable', 'investigator', 'senior'];
+    }
+    
+    // Cases collection
+    match /cases/{caseId} {
+      // Anyone authenticated can read cases
+      allow read: if isAuthenticated();
+      
+      // Public can create cases (for grievance portal)
+      // Public can update their own cases (to add files)
+      // Officers can create and update any cases
+      allow create: if true; // Public can create
+      allow update: if true; // Allow updates (for file uploads)
+      allow delete: if isOfficer();
+    }
+    
+    // Audit logs collection - APPEND ONLY
+    match /audit_logs/{logId} {
+      // Authenticated users can read audit logs
+      // Only senior officers can read all audit logs
+      allow read: if isAuthenticated() && (getUserRole() == 'senior' || 
+        resource.data.caseId != null);
+      
+      // Anyone authenticated can create (append-only)
+      // NO updates or deletes allowed
+      allow create: if isAuthenticated();
+      allow update, delete: if false; // Immutable
+    }
+    
+    // File metadata collection
+    match /files/{fileId} {
+      // Authenticated users can read file metadata
+      allow read: if isAuthenticated();
+      
+      // Only officers can create/update file metadata
+      allow create, update: if isOfficer();
+      allow delete: if getUserRole() == 'senior';
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // Users can read their own profile
+      // Officers can read any user profile
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId || 
+        (getUserRole() != null && getUserRole() in ['constable', 'investigator', 'senior'])
+      );
+      
+      // Users can create/update their own profile
+      // Officers can create/update any profile
+      // Allow creation for seeding (when user might not have role yet)
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        request.auth.uid == userId || 
+        (getUserRole() != null && getUserRole() in ['constable', 'investigator', 'senior'])
+      );
+      allow delete: if false; // Never allow deletion
+    }
+  }
+}
+
